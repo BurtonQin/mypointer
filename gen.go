@@ -14,10 +14,13 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa/ssautil"
 	"golang.org/x/tools/internal/typeparams"
 )
 
@@ -542,6 +545,10 @@ func (a *analysis) shouldUseContext(fn *ssa.Function) bool {
 	if a.findIntrinsic(fn) != nil {
 		return true // treat intrinsics context-sensitively
 	}
+	// MYCODE(boqin): TODO
+	if is_in_sensitive_list(fn) {
+		return true
+	}
 	if len(fn.Blocks) != 1 {
 		return false // too expensive
 	}
@@ -823,6 +830,12 @@ func (a *analysis) objectNode(cgn *cgnode, v ssa.Value) nodeid {
 			a.addNodes(mustDeref(v.Type()), "alloc")
 			a.endObject(obj, cgn, v)
 
+		// MYCODE(boqin): case *ssa.Extract is borrowed from mypointer
+		case *ssa.Extract:
+			obj = a.nextNode()
+			a.addNodes(v.Type(), "Extract")
+			a.endObject(obj, cgn, v)
+
 		case *ssa.MakeSlice:
 			obj = a.nextNode()
 			a.addNodes(sliceToArray(v.Type()), "makeslice")
@@ -870,6 +883,7 @@ func (a *analysis) objectNode(cgn *cgnode, v ssa.Value) nodeid {
 		case *ssa.Slice:
 			obj = a.objectNode(cgn, v.X)
 
+		// MYCODE(boqin): case *ssa.SliceToArrayPointer is NOT in mypointer
 		case *ssa.SliceToArrayPointer:
 			// Going from a []T to a *[k]T for some k.
 			// A slice []T is treated as if it were a *T pointer.
@@ -980,6 +994,7 @@ func (a *analysis) genInstr(cgn *cgnode, instr ssa.Instruction) {
 			a.sizeof(instr.Type()))
 
 	case *ssa.Index:
+		// MYCODE(boqin): this is NOT in mypointer. Is the isstring check necessary here?
 		_, isstring := typeparams.CoreType(instr.X.Type()).(*types.Basic)
 		if !isstring {
 			a.copy(a.valueNode(instr), 1+a.valueNode(instr.X), a.sizeof(instr.Type()))
@@ -1026,6 +1041,7 @@ func (a *analysis) genInstr(cgn *cgnode, instr ssa.Instruction) {
 	case *ssa.Slice:
 		a.copy(a.valueNode(instr), a.valueNode(instr.X), 1)
 
+	// MYCODE(boqin): this is NOT in mypointer.
 	case *ssa.SliceToArrayPointer:
 		// Going from a []T to a *[k]T (for some k) is a single `dst = src` constraint.
 		// Both []T and *[k]T are modelled as an *IdArrayT where IdArrayT is the identity
@@ -1056,6 +1072,7 @@ func (a *analysis) genInstr(cgn *cgnode, instr ssa.Instruction) {
 	case *ssa.Range:
 		// Do nothing.  Next{Iter: *ssa.Range} handles this case.
 
+	// MYCODE(boqin): different from mypointer
 	case *ssa.Next:
 		if !instr.IsString {
 			// Assumes that Next is always directly applied to a Range result
@@ -1155,22 +1172,56 @@ func (a *analysis) genRootCalls() *cgnode {
 	// root function so we don't need to special-case site-less
 	// call edges.
 
-	// For each main package, call main.init(), main.main().
-	for _, mainPkg := range a.config.Mains {
-		main := mainPkg.Func("main")
-		if main == nil {
-			panic(fmt.Sprintf("%s has no main function", mainPkg))
+	//MYCODE
+	// The following anotated code need an entry point. However, we can just scan all functions that have no caller
+	// // For each main package, call main.init(), main.main().
+	// for _, mainPkg := range a.config.OLDMains {
+	// 	main := mainPkg.Func("main")
+	// 	if main == nil {
+	// 		panic(fmt.Sprintf("%s has no main function", mainPkg))
+	// 	}
+
+	// 	targets := a.addOneNode(main.Signature, "root.targets", nil)
+	// 	site := &callsite{targets: targets}
+	// 	root.sites = append(root.sites, site)
+	// 	for _, fn := range [2]*ssa.Function{mainPkg.Func("init"), main} {
+	// 		if a.log != nil {
+	// 			fmt.Fprintf(a.log, "\troot call to %s:\n", fn)
+	// 		}
+	// 		a.copy(targets, a.valueNode(fn), 1)
+	// 	}
+	// }
+
+	// Start with all functions that don't have caller
+	for fn, _ := range ssautil.AllFunctions(a.prog) {
+		if fn == nil {
+			continue
 		}
 
-		targets := a.addOneNode(main.Signature, "root.targets", nil)
+		if index := strings.Index(fn.Name(), "init#"); index > -1 {
+			name_after := fn.Name()[index+5:]
+			_, err := strconv.Atoi(name_after)
+			if err == nil { // successfully converted, meaning the function name is like init#123
+				continue
+			}
+		}
+
+		if Known_callgraph != nil { // This is the second time to run pointer analysis
+			node := Known_callgraph.Nodes[fn]
+			if len(node.In) != 0 {
+				continue
+			}
+		}
+
+		targets := a.addOneNode(fn.Signature, "root.targets", nil)
 		site := &callsite{targets: targets}
 		root.sites = append(root.sites, site)
-		for _, fn := range [2]*ssa.Function{mainPkg.Func("init"), main} {
-			if a.log != nil {
-				fmt.Fprintf(a.log, "\troot call to %s:\n", fn)
-			}
-			a.copy(targets, a.valueNode(fn), 1)
+
+		if a.log != nil {
+			fmt.Fprintf(a.log, "\troot call to %s:\n", fn)
 		}
+		a.copy(targets, a.valueNode(fn), 1)
+
 	}
 
 	return root
@@ -1207,12 +1258,14 @@ func (a *analysis) genFunc(cgn *cgnode) {
 		return
 	}
 
+	// MYCODE(boqin): This is NOT in mypointer
 	if fn.TypeParams().Len() > 0 && len(fn.TypeArgs()) == 0 {
 		// Body of generic function.
 		// We'll warn about calls to such functions at the end.
 		return
 	}
 
+	// MYCODE(boqin): This is NOT in mypointer
 	if strings.HasPrefix(fn.Synthetic, "instantiation wrapper ") {
 		// instantiation wrapper of a generic function.
 		// These may contain type coercions which are not currently supported.
@@ -1280,9 +1333,99 @@ func (a *analysis) genFunc(cgn *cgnode) {
 			a.genInstr(cgn, instr)
 		}
 	}
+	///MYCODE
+	// If we have the Known_callgraph and Recv_to_methods_map
+	// If this function is a non-synthetic non-anonymous exported (starting with an Uppercase letter) method
+	if Known_callgraph != nil && Recv_to_methods_map != nil {
+		if fn.Signature.Recv() == nil || fn.Synthetic != "" || strings.Contains(fn.String(), "$") {
+			goto Normal
+		}
+		is_exported := false // In Go, a function whose name starts with an Uppercase is exported
+		for _, r := range fn.Name() {
+			if unicode.IsUpper(r) {
+				is_exported = true
+			} else {
+				is_exported = false
+			}
+			break
+		}
+		if is_exported == false {
+			goto Normal
+		}
+		method := Known_callgraph.Nodes[fn]
+		if method == nil {
+			goto Normal
+		}
+
+		// Now record all other non-synthetic methods non-anonymous methods that have no caller
+		no_caller_methods := []*callgraph.Node{}
+		recv := fn.Params[0]
+		all_methods := Recv_to_methods_map[recv.Type().String()]
+		for _, other_method := range all_methods {
+			if other_method == method || other_method.Func.Synthetic != "" || strings.Contains(other_method.Func.String(), "$") {
+				continue
+			}
+			if len(other_method.In) > 0 {
+				continue
+			}
+
+			no_caller_methods = append(no_caller_methods, other_method)
+		}
+		// As if fn will call all functions in no_caller_methods
+		for _, other_method := range no_caller_methods {
+			a.genFakeCall(fn, other_method.Func)
+		}
+
+	}
+
+Normal:
 
 	a.localval = nil
 	a.localobj = nil
+}
+
+// MYCODE
+// genFakeCall generates constraints for a fake call between caller and callee.
+func (a *analysis) genFakeCall(caller, callee *ssa.Function) {
+
+	// Ascertain the context (contour/cgnode) for a particular call.
+	var obj nodeid
+	obj = a.objectNode(nil, callee) // shared contour
+
+	// Copy receiver
+	params := a.funcParams(obj)
+	caller_param0 := caller.Params[0]
+	var param0_arg ssa.Value
+outer:
+	for _, bb := range caller.Blocks {
+		for _, inst := range bb.Instrs {
+			if v, ok := inst.(ssa.Value); ok {
+				if v.Type().String() == caller_param0.Type().String() && v != caller_param0 {
+					param0_arg = v
+					break outer
+				}
+			}
+			operands := inst.Operands([]*ssa.Value{})
+			for _, operand := range operands {
+				if operand == nil {
+					continue
+				}
+				v := *operand
+				if v == nil {
+					continue
+				}
+				if v.Type().String() == caller_param0.Type().String() && v != caller_param0 {
+					param0_arg = v
+					break outer
+				}
+			}
+		}
+	}
+	if param0_arg == nil {
+		return
+	}
+	sz := a.sizeof(param0_arg.Type())
+	a.copy(params, a.valueNode(param0_arg), sz)
 }
 
 // genMethodsOf generates nodes and constraints for all methods of type T.
@@ -1339,6 +1482,11 @@ func (a *analysis) generate() {
 	// Generate constraints for functions as they become reachable
 	// from the roots.  (No constraints are generated for functions
 	// that are dead in this analysis scope.)
+
+	// MYCODE(boqin): Why this redundant code is in mypointer?
+	list := a.genq
+	_ = list
+
 	for len(a.genq) > 0 {
 		cgn := a.genq[0]
 		a.genq = a.genq[1:]

@@ -14,7 +14,6 @@ import (
 	"os"
 	"reflect"
 	"runtime"
-	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -209,20 +208,47 @@ func (a *analysis) computeTrackBits() {
 	}
 }
 
+// /MYCODE
+var Known_callgraph *callgraph.Graph
+var Recv_to_methods_map map[string][]*callgraph.Node
+
 // Analyze runs the pointer analysis with the scope and options
 // specified by config, and returns the (synthetic) root of the callgraph.
 //
 // Pointer analysis of a transitively closed well-typed program should
 // always succeed.  An error can occur only due to an internal bug.
-func Analyze(config *Config) (result *Result, err error) {
-	if config.Mains == nil {
+func Analyze(config *Config, known_callgraph *callgraph.Graph) (result *Result, err error) {
+	///MYCODE
+	// Do some preparation
+	Known_callgraph = known_callgraph
+	if Known_callgraph != nil { // This is the second run of pointer analysis. We know the callgraph
+		Recv_to_methods_map = make(map[string][]*callgraph.Node)
+		for _, node := range Known_callgraph.Nodes {
+			if node.Func == nil {
+				continue
+			}
+			recv := node.Func.Signature.Recv()
+			if recv == nil {
+				continue
+			}
+			recv_type := recv.Type().String()
+			methods := Recv_to_methods_map[recv_type]
+			_ = methods
+			Recv_to_methods_map[recv_type] = append(Recv_to_methods_map[recv_type], node)
+		}
+	}
+
+	// MYCODE
+	// Replace Mains with Prog
+	if config.Prog == nil {
 		return nil, fmt.Errorf("no main/test packages to analyze (check $GOROOT/$GOPATH)")
 	}
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("internal error in pointer analysis: %v (please report this bug)", p)
-			fmt.Fprintln(os.Stderr, "Internal panic in pointer analysis:")
-			debug.PrintStack()
+			// MYCODE
+			// fmt.Fprintln(os.Stderr, "Internal panic in pointer analysis:")
+			// debug.PrintStack()
 		}
 	}()
 
@@ -354,6 +380,17 @@ func Analyze(config *Config) (result *Result, err error) {
 		}
 	}
 
+	///MYCODE
+	// Delete my synthesized <root> function, which calls all the functions
+	if a.config.BuildCallGraph {
+		for _, node := range a.result.CallGraph.Nodes {
+			if node.Func.Name() == "<root>" {
+				a.result.CallGraph.DeleteNode(node)
+				break
+			}
+		}
+	}
+
 	return a.result, nil
 }
 
@@ -362,7 +399,9 @@ func Analyze(config *Config) (result *Result, err error) {
 func (a *analysis) callEdge(caller *cgnode, site *callsite, calleeid nodeid) {
 	obj := a.nodes[calleeid].obj
 	if obj.flags&otFunction == 0 {
-		panic(fmt.Sprintf("callEdge %s -> n%d: not a function object", site, calleeid))
+		///MYCODE
+		return
+		// panic(fmt.Sprintf("callEdge %s -> n%d: not a function object", site, calleeid))
 	}
 	callee := obj.cgn
 

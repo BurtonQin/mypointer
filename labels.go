@@ -57,6 +57,17 @@ func (l Label) Path() string {
 	return l.subelement.path()
 }
 
+// MYCODE
+func (l Label) Cgn_CallInst() ssa.CallInstruction {
+	if l.obj.cgn == nil {
+		return nil
+	}
+	if l.obj.cgn.callersite == nil {
+		return nil
+	}
+	return l.obj.cgn.callersite.instr
+}
+
 // Pos returns the position of this label, if known, zero otherwise.
 func (l Label) Pos() token.Pos {
 	switch data := l.obj.data.(type) {

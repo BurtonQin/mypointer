@@ -33,7 +33,14 @@ type Config struct {
 	//
 	// Calls to generic functions will be unsound unless packages
 	// are built using the ssa.InstantiateGenerics builder mode.
-	Mains []*ssa.Package
+
+	// MYCODE
+	// Rename Mains to OLDMains
+	OLDMains []*ssa.Package
+
+	// MYCODE
+	// Add Program
+	Prog *ssa.Program
 
 	// Reflection determines whether to handle reflection
 	// operators soundly, which is currently rather slow since it
@@ -151,8 +158,13 @@ func (c *Config) AddExtendedQuery(v ssa.Value, query string) (*Pointer, error) {
 }
 
 func (c *Config) prog() *ssa.Program {
-	for _, main := range c.Mains {
-		return main.Prog
+	// MYCODE
+	// Replace Mains with Prog
+	// for _, main := range c.Mains {
+	// 	return main.Prog
+	// }
+	if c.Prog != nil {
+		return c.Prog
 	}
 	panic("empty scope")
 }
@@ -263,6 +275,14 @@ func (s PointsToSet) Intersects(y PointsToSet) bool {
 	return !z.IsEmpty()
 }
 
+// MYCODE
+func (x PointsToSet) Equals(y PointsToSet) bool {
+	if x.pts == nil || y.pts == nil {
+		return false
+	}
+	return x.pts.Sparse.Equals(&y.pts.Sparse)
+}
+
 func (p Pointer) String() string {
 	return fmt.Sprintf("n%d", p.n)
 }
@@ -279,6 +299,13 @@ func (p Pointer) PointsTo() PointsToSet {
 // the argument pointer.
 func (p Pointer) MayAlias(q Pointer) bool {
 	return p.PointsTo().Intersects(q.PointsTo())
+}
+
+// MYCODE
+// Equals reports whether the receiver pointer has equal points-to set of
+// the argument pointer.
+func (p Pointer) Equals(q Pointer) bool {
+	return p.PointsTo().Equals(q.PointsTo())
 }
 
 // DynamicTypes returns p.PointsTo().DynamicTypes().
