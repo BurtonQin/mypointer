@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package pointer
+package mypointer
 
 import (
 	"bytes"
@@ -10,8 +10,8 @@ import (
 	"go/token"
 	"io"
 
+	"github.com/system-pclub/GCatch/GCatch/tools/go/callgraph"
 	"golang.org/x/tools/container/intsets"
-	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/types/typeutil"
 )

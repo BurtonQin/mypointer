@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package pointer
+package mypointer
 
 // This file implements renumbering, a pre-solver optimization to
 // improve the efficiency of the solver's points-to set representation.

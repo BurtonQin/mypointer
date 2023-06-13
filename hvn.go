@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package pointer
+package mypointer
 
 // This file implements Hash-Value Numbering (HVN), a pre-solver
 // constraint optimization described in Hardekopf & Lin, SAS'07 (see

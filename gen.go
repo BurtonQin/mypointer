@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package pointer
+package mypointer
 
 // This file defines the constraint generation phase.
 
@@ -18,10 +18,10 @@ import (
 	"strings"
 	"unicode"
 
-	"golang.org/x/tools/go/callgraph"
+	"github.com/system-pclub/GCatch/GCatch/tools/go/callgraph"
+	"github.com/system-pclub/GCatch/GCatch/tools/internal/typeparams"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
-	"golang.org/x/tools/internal/typeparams"
 )
 
 var (
