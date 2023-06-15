@@ -1,5 +1,5 @@
 // / MYCODE
-package pointer
+package mypointer
 
 import (
 	"strings"
